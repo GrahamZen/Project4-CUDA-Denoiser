@@ -1,14 +1,14 @@
 {
     "GLTF": {
         "from file": true,
-        "path": "D:/OneDrive/GitHub/glTF-Sample-Models/2.0/ABeautifulGame/glTF/ABeautifulGame.gltf"
+        "path": "D:/OneDrive/GitHub/Upenn/CIS_5650/Project3-CUDA-Path-Tracer/scenes/cornell_box/bunny.gltf"
     },
     "RenderState": {
         "camera": {
             "aspect ratio": 1,
             "screen height": 1200,
             "focal length": 0.5,
-            "aperture size": 0.005,
+            "aperture size": 0,
             "position": [0, 0, 0.8],
             "lookAt": [0, 0.3, 0.8],
             "view": [0, 0, -1],
@@ -19,6 +19,7 @@
         "traceDepth": 8,
         "imageName": "output.png",
         "antiAliasing": true,
+        "cache first bounce": false,
         "dof": true,
         "test normal": false,
         "test intersect": false,
