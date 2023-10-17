@@ -56,15 +56,15 @@ __global__ void ATrousFilterKern(glm::ivec2 resolution, const glm::vec3* dev_ima
 
                 glm::vec3 t = cval - ctmp;
                 float dist2 = dot(t, t);
-                float c_w = glm::min(exp(-(dist2) / c_phi), 1.f);
+                float c_w = glm::min(exp(-(dist2) / (c_phi * c_phi)), 1.f);
 
                 t = nval - ntmp;
                 dist2 = glm::max(dot(t, t) / (stepWidth * stepWidth), 0.f);
-                float n_w = glm::min(exp(-(dist2) / n_phi), 1.f);
+                float n_w = glm::min(exp(-(dist2) / (n_phi * n_phi)), 1.f);
 
                 t = pval - ptmp;
                 dist2 = dot(t, t);
-                float p_w = glm::min(exp(-(dist2) / p_phi), 1.f);
+                float p_w = glm::min(exp(-(dist2) / (p_phi * p_phi)), 1.f);
 
                 float weight = c_w * n_w * p_w * GaussianKernel[j + 2] * GaussianKernel[i + 2];
                 sum += ctmp * weight;

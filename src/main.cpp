@@ -22,10 +22,10 @@ int lastLoopIterations = 0;
 bool ui_showGbuffer = false;
 bool ui_denoise = false;
 bool ui_gaussian = false;
-int ui_filterSize = 80;
-float ui_colorWeight = 0.45f;
-float ui_normalWeight = 0.35f;
-float ui_positionWeight = 0.2f;
+int ui_filterSize = 32;
+float ui_colorWeight = 10.f;
+float ui_normalWeight = 0.0001;
+float ui_positionWeight = 0.1f;
 bool ui_saveAndExit = false;
 
 static bool camchanged = true;
@@ -56,12 +56,10 @@ int height;
 int main(int argc, char** argv) {
     startTimeString = currentTimeString();
 
-    if (argc < 2) {
-        printf("Usage: %s SCENEFILE.txt\n", argv[0]);
-        return 1;
+    const char* sceneFile = "";
+    if (argc >= 2) {
+        sceneFile = argv[1];
     }
-
-    const char* sceneFile = argv[1];
 
     // Load scene file
     scene = new Scene(sceneFile);
@@ -132,7 +130,7 @@ void saveImage() {
 
     std::string filename = renderState->imageName;
     std::ostringstream ss;
-    ss << filename << "." << startTimeString << "." << samples << "samp";
+    ss << filename << "." << startTimeString << "." << samples << "samp" << "." << ui_iterations << "iter" << "." << ui_filterSize << "filterSize" << "." << ui_colorWeight << "c_w" << "." << ui_normalWeight << "n_w" << "." << ui_positionWeight << "p_w";
     filename = ss.str();
 
     // CHECKITOUT

@@ -232,15 +232,15 @@ void RenderImGui(int windowWidth, int windowHeight)
         ui_hide = !ui_hide;
     }
 
-    ImGui::SliderInt("Iterations", &ui_iterations, 1, startupIterations);
+    ImGui::DragInt("Iterations", &ui_iterations, 1, 1, startupIterations);
 
     ImGui::Checkbox("Denoise", &ui_denoise);
     ImGui::Checkbox("Gaussian", &ui_gaussian);
 
-    ImGui::SliderInt("Filter Size", &ui_filterSize, 0, 100);
-    ImGui::SliderFloat("Color Weight", &ui_colorWeight, 0.0f, 100.0f);
-    ImGui::SliderFloat("Normal Weight", &ui_normalWeight, 0.0f, 100.0f);
-    ImGui::SliderFloat("Position Weight", &ui_positionWeight, 0.0f, 100.0f);
+    ImGui::DragInt("Filter Size", &ui_filterSize, 1, 0, 100);
+    ImGui::DragFloat("Color Weight", &ui_colorWeight, 0.1f, 0.0f, 100.0f, "%.4f");
+    ImGui::DragFloat("Normal Weight", &ui_normalWeight, 0.1f, 0.0f, 1.0f, "%.4f");
+    ImGui::DragFloat("Position Weight", &ui_positionWeight, 0.1f, 0.0f, 1.0f, "%.4f");
 
     ImGui::Separator();
 
