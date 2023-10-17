@@ -21,6 +21,7 @@ int startupIterations = 0;
 int lastLoopIterations = 0;
 bool ui_showGbuffer = false;
 bool ui_denoise = false;
+bool ui_gaussian = false;
 int ui_filterSize = 80;
 float ui_colorWeight = 0.45f;
 float ui_normalWeight = 0.35f;
@@ -38,6 +39,10 @@ glm::vec3 ogLookAt; // for recentering the camera
 Scene* scene;
 GuiDataContainer* guiData;
 RenderState* renderState;
+Denoiser* denoiser;
+extern glm::vec3* dev_image;
+extern GBufferPixel* dev_gBuffer;
+
 int iteration;
 
 int width;
@@ -69,6 +74,7 @@ int main(int argc, char** argv) {
     Camera& cam = renderState->camera;
     width = cam.resolution.x;
     height = cam.resolution.y;
+    denoiser = new Denoiser{ glm::ivec2(width, height) };
 
     ui_iterations = renderState->iterations;
     startupIterations = ui_iterations;
@@ -99,6 +105,7 @@ int main(int argc, char** argv) {
     // GLFW main loop
     mainLoop();
 
+    delete denoiser;
     return 0;
 }
 
@@ -184,6 +191,19 @@ void runCuda() {
         // execute the kernel
         int frame = 0;
         pathtrace(frame, iteration);
+        if (ui_denoise) {
+            if (ui_gaussian) {
+                denoiser->gaussianBlur(dev_image, ui_filterSize);
+                std::swap(dev_image, denoiser->dev_outputCol);
+            }
+            else {
+                int level = glm::ceil(glm::log2((float)ui_filterSize));
+                for (int i = 0; i < level; i++) {
+                    denoiser->filter(dev_image, dev_gBuffer, i, ui_colorWeight, ui_normalWeight, ui_positionWeight);
+                    std::swap(dev_image, denoiser->dev_outputCol);
+                }
+            }
+        }
     }
 
     if (ui_showGbuffer) {
