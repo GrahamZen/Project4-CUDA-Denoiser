@@ -41,6 +41,7 @@ GuiDataContainer* guiData;
 RenderState* renderState;
 Denoiser* denoiser;
 extern glm::vec3* dev_image;
+extern glm::vec3* dev_image_denoised;
 extern GBufferPixel* dev_gBuffer;
 
 int iteration;
@@ -191,23 +192,28 @@ void runCuda() {
         // execute the kernel
         int frame = 0;
         pathtrace(frame, iteration);
+    }
+    if (iteration == ui_iterations)
         if (ui_denoise) {
             if (ui_gaussian) {
                 denoiser->gaussianBlur(dev_image, ui_filterSize);
-                std::swap(dev_image, denoiser->dev_outputCol);
+                std::swap(dev_image_denoised, denoiser->dev_outputCol);
             }
             else {
                 int level = glm::ceil(glm::log2((float)ui_filterSize));
+                cudaMemcpy(dev_image_denoised, dev_image, width * height * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
                 for (int i = 0; i < level; i++) {
-                    denoiser->filter(dev_image, dev_gBuffer, i, ui_colorWeight, ui_normalWeight, ui_positionWeight);
-                    std::swap(dev_image, denoiser->dev_outputCol);
+                    denoiser->filter(dev_image_denoised, dev_gBuffer, i, ui_colorWeight, ui_normalWeight, ui_positionWeight);
+                    std::swap(dev_image_denoised, denoiser->dev_outputCol);
                 }
             }
         }
-    }
 
     if (ui_showGbuffer) {
         showGBuffer(pbo_dptr);
+    }
+    else if (ui_denoise && iteration == ui_iterations) {
+        showDeNoisedImage(pbo_dptr, iteration);
     }
     else {
         showImage(pbo_dptr, iteration);

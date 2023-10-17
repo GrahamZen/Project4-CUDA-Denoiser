@@ -234,13 +234,13 @@ void RenderImGui(int windowWidth, int windowHeight)
 
     ImGui::SliderInt("Iterations", &ui_iterations, 1, startupIterations);
 
-    bool denoiseChanged = ImGui::Checkbox("Denoise", &ui_denoise);
-    bool gaussianChanged = ImGui::Checkbox("Gaussian", &ui_gaussian);
+    ImGui::Checkbox("Denoise", &ui_denoise);
+    ImGui::Checkbox("Gaussian", &ui_gaussian);
 
-    bool filterSizeChanged = ImGui::SliderInt("Filter Size", &ui_filterSize, 0, 100);
-    bool colorWeightChanged = ImGui::SliderFloat("Color Weight", &ui_colorWeight, 0.0f, 10.0f);
-    bool normalWeightChanged = ImGui::SliderFloat("Normal Weight", &ui_normalWeight, 0.0f, 10.0f);
-    bool positionWeightChanged = ImGui::SliderFloat("Position Weight", &ui_positionWeight, 0.0f, 10.0f);
+    ImGui::SliderInt("Filter Size", &ui_filterSize, 0, 100);
+    ImGui::SliderFloat("Color Weight", &ui_colorWeight, 0.0f, 100.0f);
+    ImGui::SliderFloat("Normal Weight", &ui_normalWeight, 0.0f, 100.0f);
+    ImGui::SliderFloat("Position Weight", &ui_positionWeight, 0.0f, 100.0f);
 
     ImGui::Separator();
 
@@ -280,7 +280,7 @@ void RenderImGui(int windowWidth, int windowHeight)
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-    if (focalLengthChanged || apertureSizeChanged || cameraPhiChanged || cameraThetaChanged || cameraLookAtChanged || zoomChanged || cacheFirstBounce|| denoiseChanged || colorWeightChanged || normalWeightChanged || positionWeightChanged || filterSizeChanged || gaussianChanged) {
+    if (focalLengthChanged || apertureSizeChanged || cameraPhiChanged || cameraThetaChanged || cameraLookAtChanged || zoomChanged || cacheFirstBounce) {
         valChanged = true;
     }
 }

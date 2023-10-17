@@ -28,7 +28,7 @@ void checkCudaMem(T* d_ptr, int size) {
 }
 #endif // DEBUG
 
-__device__ constexpr float GaussianKernel[5] = { .0625f, .25f, .375f, .25f, .0625f };
+__constant__ constexpr float GaussianKernel[5] = { .0625f, .25f, .375f, .25f, .0625f };
 
 __global__ void ATrousFilterKern(glm::ivec2 resolution, const glm::vec3* dev_image, const GBufferPixel* gBuffer, glm::vec3* outputCol,
     int stepWidth, float c_phi, float n_phi, float p_phi)
@@ -37,6 +37,10 @@ __global__ void ATrousFilterKern(glm::ivec2 resolution, const glm::vec3* dev_ima
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
     if (x < resolution.x && y < resolution.y) {
         int index = x + (y * resolution.x);
+        if (stepWidth == 0) {
+            outputCol[index] = dev_image[index];
+            return;
+        }
         glm::vec3 sum(0.f);
         glm::vec3 cval = dev_image[index];
         glm::vec3 nval = gBuffer[index].normal;
@@ -67,10 +71,7 @@ __global__ void ATrousFilterKern(glm::ivec2 resolution, const glm::vec3* dev_ima
                 cum_w += weight;
             }
         }
-        if (cum_w > 0.f)
-            outputCol[index] = sum / cum_w;
-        else
-            outputCol[index] = dev_image[index];
+        outputCol[index] = sum / cum_w;
     }
 }
 
@@ -116,13 +117,13 @@ Denoiser::~Denoiser() {
 
 
 void Denoiser::filter(const glm::vec3* image, const GBufferPixel* gBuffer, int level, float c_phi, float n_phi, float p_phi) {
-    const dim3 blockSize2d(32, 32);
+    const dim3 blockSize2d(8, 8);
     const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
     ATrousFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, gBuffer, dev_outputCol, 1 << level, c_phi, n_phi, p_phi);
 }
 
 void Denoiser::gaussianBlur(const glm::vec3* image, int stepWidth) {
-    const dim3 blockSize2d(32, 32);
+    const dim3 blockSize2d(8, 8);
     const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
     gaussianFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, dev_outputCol, stepWidth, stepWidth * 0.33f);
 }
@@ -130,6 +131,32 @@ void Denoiser::gaussianBlur(const glm::vec3* image, int stepWidth) {
 
 //Kernel that writes the image to the OpenGL PBO directly.
 __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution,
+    int iter, glm::vec3* image, bool acesFilm, bool NoGammaCorrection, bool Reinhard) {
+    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+
+    if (x < resolution.x && y < resolution.y) {
+        int index = x + (y * resolution.x);
+        glm::vec3 pix = image[index] / (float)iter;
+
+        if (acesFilm)
+            pix = pix * (pix * (pix * 2.51f + 0.03f) + 0.024f) / (pix * (pix * 3.7f + 0.078f) + 0.14f);
+        if (Reinhard)
+            pix = pix / (1.f + pix);
+        if (!NoGammaCorrection)
+            pix = glm::pow(pix, glm::vec3(1.f / 2.2f));
+
+        glm::ivec3 color = glm::ivec3(glm::clamp(pix, 0.f, 1.f) * 255.0f);
+        // Each thread writes one pixel location in the texture (textel)
+        pbo[index].w = 0;
+        pbo[index].x = color.x;
+        pbo[index].y = color.y;
+        pbo[index].z = color.z;
+    }
+}
+
+//Kernel that writes the image to the OpenGL PBO directly.
+__global__ void sendDenoisedImageToPBO(uchar4* pbo, glm::ivec2 resolution,
     int iter, glm::vec3* image, bool acesFilm, bool NoGammaCorrection, bool Reinhard) {
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -172,6 +199,7 @@ __global__ void gbufferToPBO(uchar4* pbo, glm::ivec2 resolution, GBufferPixel* g
 static Scene* hst_scene = nullptr;
 static GuiDataContainer* guiData = nullptr;
 glm::vec3* dev_image = nullptr;
+glm::vec3* dev_image_denoised = nullptr;
 static TriangleDetail* dev_geoms = nullptr;
 static Material* dev_materials = nullptr;
 static PathSegment* dev_paths = nullptr;
@@ -226,6 +254,8 @@ void pathtraceInit(Scene* scene) {
 
     cudaMalloc(&dev_image, pixelcount * sizeof(glm::vec3));
     cudaMemset(dev_image, 0, pixelcount * sizeof(glm::vec3));
+    cudaMalloc(&dev_image_denoised, pixelcount * sizeof(glm::vec3));
+    cudaMemset(dev_image_denoised, 0, pixelcount * sizeof(glm::vec3));
 
     cudaMalloc(&dev_paths, pixelcount * sizeof(PathSegment));
     cudaMalloc(&dev_paths_terminated, pixelcount * sizeof(PathSegment));
@@ -268,6 +298,7 @@ void pathtraceInit(Scene* scene) {
 
 void pathtraceFree() {
     cudaFree(dev_image);  // no-op if dev_image is nullptr
+    cudaFree(dev_image_denoised);  // no-op if dev_image is nullptr
     cudaFree(dev_paths);
     cudaFree(dev_paths_terminated);
     cudaFree(dev_geoms);
@@ -412,7 +443,7 @@ __global__ void computeIntersections(
             if (sortByMaterial)
                 materialIndices[path_index] = intersections[path_index].materialId;
         }
-}
+    }
 }
 
 __global__ void shadeMaterial(
@@ -507,7 +538,7 @@ __global__ void shadeMaterial(
             pSeg.remainingBounces = 0;
             pSeg.pixelIndex = -1;
         }
-}
+    }
 }
 
 __global__ void generateGBuffer(
@@ -728,7 +759,7 @@ void pathtrace(int frame, int iter) {
         cudaMemcpy(hst_scene->state.image.data(), dev_image, pixelcount * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
 
     checkCUDAError("pathtrace");
-        }
+}
 
 // CHECKITOUT: this kernel "post-processes" the gbuffer/gbuffers into something that you can visualize for debugging.
 void showGBuffer(uchar4* pbo) {
@@ -751,4 +782,15 @@ void showImage(uchar4* pbo, int iter) {
 
     // Send results to OpenGL buffer for rendering
     sendImageToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, iter, dev_image, guiData->ACESFilm, guiData->NoGammaCorrection, guiData->Reinhard);
+}
+
+void showDeNoisedImage(uchar4* pbo, int iter) {
+    const Camera& cam = hst_scene->state.camera;
+    const dim3 blockSize2d(8, 8);
+    const dim3 blocksPerGrid2d(
+        (cam.resolution.x + blockSize2d.x - 1) / blockSize2d.x,
+        (cam.resolution.y + blockSize2d.y - 1) / blockSize2d.y);
+
+    // Send results to OpenGL buffer for rendering
+    sendDenoisedImageToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, iter, dev_image_denoised, guiData->ACESFilm, guiData->NoGammaCorrection, guiData->Reinhard);
 }

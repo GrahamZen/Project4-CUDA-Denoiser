@@ -12,6 +12,7 @@ void pathtraceFree();
 void pathtrace(int frame, int iteration);
 void showGBuffer(uchar4* pbo);
 void showImage(uchar4* pbo, int iter);
+void showDeNoisedImage(uchar4* pbo, int iter);
 
 struct GBufferPixel;
 
