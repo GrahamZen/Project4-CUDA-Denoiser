@@ -121,22 +121,23 @@ __global__ void ATrousFilterKernSharedSmallStWd(glm::ivec2 resolution, const glm
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
     if (x >= resolution.x && y >= resolution.y)
         return;
-    const int arr_size = BLOCK_SIZE + 4 * stepWidth;
+    const int arr_sizeX = blockDim.x + 4 * stepWidth;
+    const int arr_size = arr_sizeX * (blockDim.y + 4 * stepWidth);
     glm::vec3* sharedImage = reinterpret_cast<glm::vec3*>(sharedMemory);
-    GBufferPixel* sharedGBuffer = reinterpret_cast<GBufferPixel*>(&sharedMemory[arr_size * arr_size * sizeof(glm::vec3)]);
+    GBufferPixel* sharedGBuffer = reinterpret_cast<GBufferPixel*>(&sharedMemory[arr_size * sizeof(glm::vec3)]);
 
     const int index = i2col(y, x, resolution.x);
     if (stepWidth == 0) {
         outputCol[index] = dev_image[index];
         return;
     }
-    for (int i = 0; i < ((arr_size * arr_size) / (BLOCK_SIZE * BLOCK_SIZE) + 1); i++)
+    for (int i = 0; i < ((arr_size) / (blockDim.x * blockDim.y) + 1); i++)
     {
-        int tid = i * BLOCK_SIZE * BLOCK_SIZE + threadIdx.y * blockDim.x + threadIdx.x;
-        if (tid < arr_size * arr_size)
+        int tid = i * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x;
+        if (tid < arr_size)
         {
-            int x = blockIdx.x * blockDim.x + tid % arr_size - 2 * stepWidth;
-            int y = blockIdx.y * blockDim.y + tid / arr_size - 2 * stepWidth;
+            int x = blockIdx.x * blockDim.x + tid % arr_sizeX - 2 * stepWidth;
+            int y = blockIdx.y * blockDim.y + tid / arr_sizeX - 2 * stepWidth;
             if (x < 0 || x >= resolution.x || y < 0 || y >= resolution.y)
             {
                 sharedImage[tid] = glm::vec3(0.f);
@@ -151,7 +152,7 @@ __global__ void ATrousFilterKernSharedSmallStWd(glm::ivec2 resolution, const glm
     __syncthreads();
     int tx = threadIdx.x + 2 * stepWidth;
     int ty = threadIdx.y + 2 * stepWidth;
-    int tmpTIdx = i2col(ty, tx, arr_size);
+    int tmpTIdx = i2col(ty, tx, arr_sizeX);
     glm::vec3 sum(0.f);
     glm::vec3 cval = sharedImage[tmpTIdx];
     glm::vec3 nval = oct_to_float32x3(sharedGBuffer[tmpTIdx].normal);
@@ -160,7 +161,7 @@ __global__ void ATrousFilterKernSharedSmallStWd(glm::ivec2 resolution, const glm
     int tmpIdx = 0;
     for (int i = -2; i < 3; i++) {
         for (int j = -2; j < 3; j++) {
-            tmpTIdx = i2col(ty + j * stepWidth, tx + i * stepWidth, arr_size);
+            tmpTIdx = i2col(ty + j * stepWidth, tx + i * stepWidth, arr_sizeX);
             tmpIdx = i2col(y + j * stepWidth, x + i * stepWidth, resolution.x);
             if (tmpIdx < 0 || tmpIdx >= resolution.x * resolution.y)continue;
             glm::vec3 ctmp = sharedImage[tmpTIdx];
@@ -196,9 +197,10 @@ __global__ void ATrousFilterKernSharedLargeStWd(glm::ivec2 resolution, const glm
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
     if (x >= resolution.x && y >= resolution.y)
         return;
-    const int arr_size = BLOCK_SIZE * 5;
+    const int arr_sizeX = blockDim.x * 5;
+    const int arr_size = blockDim.x * blockDim.y * 25;
     glm::vec3* sharedImage = reinterpret_cast<glm::vec3*>(sharedMemory);
-    GBufferPixel* sharedGBuffer = reinterpret_cast<GBufferPixel*>(&sharedMemory[arr_size * arr_size * sizeof(glm::vec3)]);
+    GBufferPixel* sharedGBuffer = reinterpret_cast<GBufferPixel*>(&sharedMemory[arr_size * sizeof(glm::vec3)]);
 
     const int index = i2col(y, x, resolution.x);
     if (stepWidth == 0) {
@@ -213,7 +215,7 @@ __global__ void ATrousFilterKernSharedLargeStWd(glm::ivec2 resolution, const glm
             int gx = x + i * stepWidth;
             int gy = y + j * stepWidth;
             tmpIdx = i2col(gy, gx, resolution.x);
-            tid = i2col(ty + (j + 2) * BLOCK_SIZE, tx + (i + 2) * BLOCK_SIZE, arr_size);
+            tid = i2col(ty + (j + 2) * blockDim.x, tx + (i + 2) * blockDim.x, arr_sizeX);
             if (gx < 0 || gx >= resolution.x || gy < 0 || gy >= resolution.y)
             {
                 sharedImage[tid] = glm::vec3(0.f);
@@ -227,7 +229,7 @@ __global__ void ATrousFilterKernSharedLargeStWd(glm::ivec2 resolution, const glm
         }
     }
     __syncthreads();
-    int tmpTIdx = i2col(ty + 2 * BLOCK_SIZE, tx + 2 * BLOCK_SIZE, arr_size);
+    int tmpTIdx = i2col(ty + 2 * blockDim.x, tx + 2 * blockDim.x, arr_sizeX);
     glm::vec3 sum(0.f);
     glm::vec3 cval = sharedImage[tmpTIdx];
     glm::vec3 nval = oct_to_float32x3(sharedGBuffer[tmpTIdx].normal);
@@ -235,7 +237,7 @@ __global__ void ATrousFilterKernSharedLargeStWd(glm::ivec2 resolution, const glm
     float cum_w = 0.f;
     for (int i = -2; i < 3; i++) {
         for (int j = -2; j < 3; j++) {
-            tmpTIdx = i2col(ty + (j + 2) * BLOCK_SIZE, tx + (i + 2) * BLOCK_SIZE, arr_size);
+            tmpTIdx = i2col(ty + (j + 2) * blockDim.x, tx + (i + 2) * blockDim.x, arr_sizeX);
             tmpIdx = i2col(y + j * stepWidth, x + i * stepWidth, resolution.x);
             if (tmpIdx < 0 || tmpIdx >= resolution.x * resolution.y)continue;
             glm::vec3 ctmp = sharedImage[tmpTIdx];
@@ -296,7 +298,8 @@ __global__ void gaussianFilterKern(glm::ivec2 resolution, const glm::vec3* dev_i
 
 __global__ void gaussianFilterKernShared(glm::ivec2 resolution, const glm::vec3* dev_image, glm::vec3* outputCol, int kernelRadius, float sigma) {
     extern __shared__ glm::vec3 shared_image[];
-    const int arr_size = BLOCK_SIZE + 2 * kernelRadius;
+    const int arr_sizeX = blockDim.x + 2 * kernelRadius;
+    const int arr_size = arr_sizeX * (blockDim.y + 2 * kernelRadius);
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -305,13 +308,13 @@ __global__ void gaussianFilterKernShared(glm::ivec2 resolution, const glm::vec3*
 
     if (x >= resolution.x || y >= resolution.y) return;
 
-    for (int i = 0; i < glm::ceil(float(arr_size * arr_size) / float(BLOCK_SIZE * BLOCK_SIZE)); i++)
+    for (int i = 0; i < glm::ceil(float(arr_size) / float(blockDim.x * blockDim.y)); i++)
     {
-        int tid = i * BLOCK_SIZE * BLOCK_SIZE + threadIdx.y * blockDim.x + threadIdx.x;
-        if (tid < arr_size * arr_size)
+        int tid = i * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x;
+        if (tid < arr_size)
         {
-            int x = blockIdx.x * blockDim.x + tid % arr_size - kernelRadius;
-            int y = blockIdx.y * blockDim.y + tid / arr_size - kernelRadius;
+            int x = blockIdx.x * blockDim.x + tid % arr_sizeX - kernelRadius;
+            int y = blockIdx.y * blockDim.y + tid / arr_sizeX - kernelRadius;
             if (x < 0 || x >= resolution.x || y < 0 || y >= resolution.y)
                 shared_image[tid] = glm::vec3(0.f);
             else
@@ -329,7 +332,7 @@ __global__ void gaussianFilterKernShared(glm::ivec2 resolution, const glm::vec3*
             tmpIdx = i2col(y + i, x + j, resolution.x);
             if (tmpIdx < 0 || tmpIdx >= resolution.x * resolution.y)continue;
             float weight = gaussianDistrib(i, j, sigma);
-            sum += weight * shared_image[i2col(t_y + i, t_x + j, arr_size)];
+            sum += weight * shared_image[i2col(t_y + i, t_x + j, arr_sizeX)];
             weightSum += weight;
         }
     }
@@ -345,30 +348,39 @@ Denoiser::~Denoiser() {
 }
 
 
-void Denoiser::filter(const glm::vec3* image, const GBufferPixel* gBuffer, int level, float c_phi, float n_phi, float p_phi) {
+void Denoiser::filter(const glm::vec3* image, const GBufferPixel* gBuffer, int level, float c_phi, float n_phi, float p_phi, bool useSharedMemory) {
     const dim3 blockSize2d(BLOCK_SIZE, BLOCK_SIZE);
     const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
-    //ATrousFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, gBuffer, dev_outputCol, 1 << level, c_phi, n_phi, p_phi);
-    int stepWidth = level;
-    if (BLOCK_SIZE < stepWidth) {
-        const int arr_size = BLOCK_SIZE * 5;
-        ATrousFilterKernSharedLargeStWd << <blocksPerGrid2d, blockSize2d, arr_size* arr_size* (sizeof(glm::vec3) + sizeof(GBufferPixel)) >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
-        checkCUDAError("ATrousFilterKernSharedLargeStWd");
+    int stepWidth = 1 << level;
+    if (useSharedMemory) {
+        ATrousFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
     }
     else {
-        const int arr_size = BLOCK_SIZE + 4 * stepWidth;
-        ATrousFilterKernSharedSmallStWd << <blocksPerGrid2d, blockSize2d, arr_size* arr_size* (sizeof(glm::vec3) + sizeof(GBufferPixel)) >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
-        checkCUDAError("ATrousFilterKernSharedSmallStWd");
+        if (BLOCK_SIZE < stepWidth) {
+            const int arr_sizeX = BLOCK_SIZE * 5;
+            ATrousFilterKernSharedLargeStWd << <blocksPerGrid2d, blockSize2d, arr_sizeX* arr_sizeX* (sizeof(glm::vec3) + sizeof(GBufferPixel)) >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
+            checkCUDAError("ATrousFilterKernSharedLargeStWd");
+        }
+        else {
+            const int arr_sizeX = BLOCK_SIZE + 4 * stepWidth;
+            ATrousFilterKernSharedSmallStWd << <blocksPerGrid2d, blockSize2d, arr_sizeX* arr_sizeX* (sizeof(glm::vec3) + sizeof(GBufferPixel)) >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
+            checkCUDAError("ATrousFilterKernSharedSmallStWd");
+        }
     }
 }
 
-void Denoiser::gaussianBlur(const glm::vec3* image, int stepWidth) {
+void Denoiser::gaussianBlur(const glm::vec3* image, int stepWidth, bool useSharedMemory) {
     const dim3 blockSize2d(BLOCK_SIZE, BLOCK_SIZE);
     const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
-    //gaussianFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, dev_outputCol, stepWidth, stepWidth * 0.33f);
-    const int arr_size = BLOCK_SIZE + 2 * stepWidth;
-    gaussianFilterKernShared << <blocksPerGrid2d, blockSize2d, arr_size* arr_size * sizeof(glm::vec3) >> > (resolution, image, dev_outputCol, stepWidth, stepWidth * 0.33f);
-    checkCUDAError("gaussianFilterKernShared");
+    if (useSharedMemory) {
+        gaussianFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, dev_outputCol, stepWidth, stepWidth * 0.33f);
+        checkCUDAError("gaussianFilterKern");
+    }
+    else {
+        const int arr_sizeX = BLOCK_SIZE + 2 * stepWidth;
+        gaussianFilterKernShared << <blocksPerGrid2d, blockSize2d, arr_sizeX* arr_sizeX * sizeof(glm::vec3) >> > (resolution, image, dev_outputCol, stepWidth, stepWidth * 0.33f);
+        checkCUDAError("gaussianFilterKernShared");
+    }
 }
 
 
@@ -685,7 +697,7 @@ __global__ void computeIntersections(
             if (sortByMaterial)
                 materialIndices[path_index] = intersections[path_index].materialId;
         }
-    }
+}
 }
 
 __global__ void shadeMaterial(
@@ -780,7 +792,7 @@ __global__ void shadeMaterial(
             pSeg.remainingBounces = 0;
             pSeg.pixelIndex = -1;
         }
-    }
+}
 }
 
 __global__ void generateGBuffer(
@@ -1001,7 +1013,7 @@ void pathtrace(int frame, int iter) {
         cudaMemcpy(hst_scene->state.image.data(), dev_image, pixelcount * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
 
     checkCUDAError("pathtrace");
-}
+        }
 
 // CHECKITOUT: this kernel "post-processes" the gbuffer/gbuffers into something that you can visualize for debugging.
 void showGBuffer(uchar4* pbo) {

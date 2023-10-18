@@ -20,8 +20,8 @@ class Denoiser {
 public:
     Denoiser(glm::ivec2 resolution);
     ~Denoiser();
-    void filter(const glm::vec3* image, const GBufferPixel* gBuffer, int level, float c_phi, float n_phi, float p_phi);
-    void gaussianBlur(const glm::vec3* image, int stepWidth);
+    void filter(const glm::vec3* image, const GBufferPixel* gBuffer, int level, float c_phi, float n_phi, float p_phi, bool useSharedMemory);
+    void gaussianBlur(const glm::vec3* image, int stepWidth, bool useSharedMemory);
     glm::vec3* dev_outputCol;
 private:
     glm::ivec2 resolution;

@@ -236,6 +236,7 @@ void RenderImGui(int windowWidth, int windowHeight)
 
     ImGui::Checkbox("Denoise", &ui_denoise);
     ImGui::Checkbox("Gaussian", &ui_gaussian);
+    ImGui::Checkbox("Enable Shared Memory", &ui_shared);
 
     ImGui::DragInt("Filter Size", &ui_filterSize, 1, 0, 100);
     ImGui::DragFloat("Color Weight", &ui_colorWeight, 0.1f, 0.0f, 100.0f, "%.4f");

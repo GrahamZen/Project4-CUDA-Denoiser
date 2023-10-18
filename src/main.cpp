@@ -26,6 +26,7 @@ int ui_filterSize = 32;
 float ui_colorWeight = 10.f;
 float ui_normalWeight = 0.0001;
 float ui_positionWeight = 0.1f;
+bool ui_shared = false;
 bool ui_saveAndExit = false;
 
 static bool camchanged = true;
@@ -137,7 +138,7 @@ void saveImage() {
 
     std::string filename = renderState->imageName;
     std::ostringstream ss;
-    ss << filename << "." << startTimeString << "." << samples << "samp" << "." << ui_iterations << "iter" << "." << ui_filterSize << "filterSize" << "." << ui_colorWeight << "c_w" << "." << ui_normalWeight << "n_w" << "." << ui_positionWeight << "p_w";
+    ss << filename << "." << startTimeString << "." << samples << "samp" << "." << ui_filterSize << "filterSize" << "." << ui_colorWeight << "c_w" << "." << ui_normalWeight << "n_w" << "." << ui_positionWeight << "p_w";
     filename = ss.str();
 
     // CHECKITOUT
@@ -201,14 +202,14 @@ void runCuda() {
     if (iteration == ui_iterations)
         if (ui_denoise) {
             if (ui_gaussian) {
-                denoiser->gaussianBlur(dev_image, ui_filterSize * 2.f);
+                denoiser->gaussianBlur(dev_image, ui_filterSize * 2.f, ui_shared);
                 std::swap(dev_image_denoised, denoiser->dev_outputCol);
             }
             else {
                 int level = glm::ceil(glm::log2((float)ui_filterSize));
                 cudaMemcpy(dev_image_denoised, dev_image, width * height * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
                 for (int i = 0; i < level; i++) {
-                    denoiser->filter(dev_image_denoised, dev_gBuffer, i, ui_colorWeight, ui_normalWeight, ui_positionWeight);
+                    denoiser->filter(dev_image_denoised, dev_gBuffer, i, ui_colorWeight, ui_normalWeight, ui_positionWeight, ui_shared);
                     std::swap(dev_image_denoised, denoiser->dev_outputCol);
                 }
             }
