@@ -1,4 +1,5 @@
 #pragma once
+#define GLM_PRECISION_LOWP_FLOAT
 
 #include <string>
 #include <vector>
@@ -253,7 +254,6 @@ struct ShadeableIntersection {
 // CHECKITOUT - a simple struct for storing scene geometry information per-pixel.
 // What information might be helpful for guiding a denoising filter?
 struct GBufferPixel {
-    float t;
-    glm::vec3 normal;
+    glm::vec2 normal;
     glm::vec3 pos;
 };

@@ -54,6 +54,13 @@ int height;
 //-------------------------------
 
 int main(int argc, char** argv) {
+    cudaDeviceProp deviceProp;
+    int device;
+    cudaGetDevice(&device);
+    cudaGetDeviceProperties(&deviceProp, device);
+
+    std::cout << "Shared memory per block: " << deviceProp.sharedMemPerBlock << " bytes" << std::endl;
+
     startTimeString = currentTimeString();
 
     const char* sceneFile = "";
@@ -194,7 +201,7 @@ void runCuda() {
     if (iteration == ui_iterations)
         if (ui_denoise) {
             if (ui_gaussian) {
-                denoiser->gaussianBlur(dev_image, ui_filterSize);
+                denoiser->gaussianBlur(dev_image, ui_filterSize * 2.f);
                 std::swap(dev_image_denoised, denoiser->dev_outputCol);
             }
             else {

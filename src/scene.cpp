@@ -6,6 +6,7 @@
 #include <filesystem>
 #define TINYGLTF_IMPLEMENTATION
 #include "scene.h"
+#define GLM_PRECISION_LOWP_FLOAT
 
 namespace fs = std::filesystem;
 int Scene::id = 0;
