@@ -19,6 +19,7 @@
 
 #define ERRORCHECK 1
 #define i2col(y, x, width) ((y) * (width) + (x))
+#define BLOCK_SIZE 4
 
 #ifdef DEBUG
 template<typename T>
@@ -83,6 +84,10 @@ __global__ void ATrousFilterKern(glm::ivec2 resolution, const glm::vec3* dev_ima
         glm::vec3 pval = gBuffer[index].pos;
         float cum_w = 0.f;
         int tmpIdx = 0;
+        const float inv_c_phi = __fdividef(1.0f, c_phi * c_phi);
+        const float inv_n_phi = __fdividef(1.0f, n_phi * n_phi);
+        const float inv_p_phi = __fdividef(1.0f, p_phi * p_phi);
+        const float inv_stepWidth = __fdividef(1.0f, stepWidth * stepWidth);
         for (int i = -2; i < 3; i++) {
             for (int j = -2; j < 3; j++) {
                 tmpIdx = (x + i * stepWidth) + (y + j * stepWidth) * resolution.x;
@@ -93,25 +98,25 @@ __global__ void ATrousFilterKern(glm::ivec2 resolution, const glm::vec3* dev_ima
 
                 glm::vec3 t = cval - ctmp;
                 float dist2 = dot(t, t);
-                float c_w = glm::min(exp(-(dist2) / (c_phi * c_phi)), 1.f);
+                float c_w = glm::min(__expf(-(dist2)*inv_c_phi), 1.f);
 
                 t = nval - ntmp;
-                dist2 = glm::max(dot(t, t) / (stepWidth * stepWidth), 0.f);
-                float n_w = glm::min(exp(-(dist2) / (n_phi * n_phi)), 1.f);
+                dist2 = glm::max(dot(t, t) * inv_stepWidth, 0.f);
+                float n_w = glm::min(__expf(-(dist2)*inv_n_phi), 1.f);
 
                 t = pval - ptmp;
                 dist2 = dot(t, t);
-                float p_w = glm::min(exp(-(dist2) / (p_phi * p_phi)), 1.f);
+                float p_w = glm::min(__expf(-(dist2)*inv_p_phi), 1.f);
 
                 float weight = c_w * n_w * p_w * GaussianKernel[j + 2] * GaussianKernel[i + 2];
                 sum += ctmp * weight;
                 cum_w += weight;
             }
         }
-        outputCol[index] = sum / cum_w;
+        outputCol[index] = sum * __fdividef(1.0f, cum_w);
     }
 }
-#define BLOCK_SIZE 4
+
 __global__ void ATrousFilterKernSharedSmallStWd(glm::ivec2 resolution, const glm::vec3* dev_image, const GBufferPixel* gBuffer, glm::vec3* outputCol,
     int stepWidth, float c_phi, float n_phi, float p_phi)
 {
@@ -131,7 +136,7 @@ __global__ void ATrousFilterKernSharedSmallStWd(glm::ivec2 resolution, const glm
         outputCol[index] = dev_image[index];
         return;
     }
-    for (int i = 0; i < ((arr_size) / (blockDim.x * blockDim.y) + 1); i++)
+    for (int i = 0; i < glm::ceil(float(arr_size) / float(blockDim.x * blockDim.y)); i++)
     {
         int tid = i * blockDim.x * blockDim.y + threadIdx.y * blockDim.x + threadIdx.x;
         if (tid < arr_size)
@@ -159,6 +164,10 @@ __global__ void ATrousFilterKernSharedSmallStWd(glm::ivec2 resolution, const glm
     glm::vec3 pval = sharedGBuffer[tmpTIdx].pos;
     float cum_w = 0.f;
     int tmpIdx = 0;
+    const float inv_c_phi = __fdividef(1.0f, c_phi * c_phi);
+    const float inv_n_phi = __fdividef(1.0f, n_phi * n_phi);
+    const float inv_p_phi = __fdividef(1.0f, p_phi * p_phi);
+    const float inv_stepWidth = __fdividef(1.0f, stepWidth * stepWidth);
     for (int i = -2; i < 3; i++) {
         for (int j = -2; j < 3; j++) {
             tmpTIdx = i2col(ty + j * stepWidth, tx + i * stepWidth, arr_sizeX);
@@ -170,22 +179,22 @@ __global__ void ATrousFilterKernSharedSmallStWd(glm::ivec2 resolution, const glm
 
             glm::vec3 t = cval - ctmp;
             float dist2 = dot(t, t);
-            float c_w = glm::min(exp(-(dist2) / (c_phi * c_phi)), 1.f);
+            float c_w = glm::min(__expf(-(dist2)*inv_c_phi), 1.f);
 
             t = nval - ntmp;
-            dist2 = glm::max(dot(t, t) / (stepWidth * stepWidth), 0.f);
-            float n_w = glm::min(exp(-(dist2) / (n_phi * n_phi)), 1.f);
+            dist2 = glm::max(dot(t, t) * inv_stepWidth, 0.f);
+            float n_w = glm::min(__expf(-(dist2)*inv_n_phi), 1.f);
 
             t = pval - ptmp;
             dist2 = dot(t, t);
-            float p_w = glm::min(exp(-(dist2) / (p_phi * p_phi)), 1.f);
+            float p_w = glm::min(__expf(-(dist2)*inv_p_phi), 1.f);
 
             float weight = c_w * n_w * p_w * GaussianKernel[j + 2] * GaussianKernel[i + 2];
             sum += ctmp * weight;
             cum_w += weight;
         }
     }
-    outputCol[index] = sum / cum_w;
+    outputCol[index] = sum * __fdividef(1.0f, cum_w);
 }
 
 __global__ void ATrousFilterKernSharedLargeStWd(glm::ivec2 resolution, const glm::vec3* dev_image, const GBufferPixel* gBuffer, glm::vec3* outputCol,
@@ -212,11 +221,9 @@ __global__ void ATrousFilterKernSharedLargeStWd(glm::ivec2 resolution, const glm
     const int ty = threadIdx.y;
     for (int i = -2; i < 3; i++) {
         for (int j = -2; j < 3; j++) {
-            int gx = x + i * stepWidth;
-            int gy = y + j * stepWidth;
-            tmpIdx = i2col(gy, gx, resolution.x);
+            tmpIdx = i2col(y + j * stepWidth, x + i * stepWidth, resolution.x);
             tid = i2col(ty + (j + 2) * blockDim.x, tx + (i + 2) * blockDim.x, arr_sizeX);
-            if (gx < 0 || gx >= resolution.x || gy < 0 || gy >= resolution.y)
+            if (tmpIdx < 0 || tmpIdx >= resolution.x * resolution.y)
             {
                 sharedImage[tid] = glm::vec3(0.f);
                 sharedGBuffer[tid] = GBufferPixel{};
@@ -229,16 +236,21 @@ __global__ void ATrousFilterKernSharedLargeStWd(glm::ivec2 resolution, const glm
         }
     }
     __syncthreads();
-    int tmpTIdx = i2col(ty + 2 * blockDim.x, tx + 2 * blockDim.x, arr_sizeX);
+    const int idx = i2col(ty + 2 * blockDim.x, tx + 2 * blockDim.x, arr_sizeX);
+    int tmpTIdx = 0;
     glm::vec3 sum(0.f);
-    glm::vec3 cval = sharedImage[tmpTIdx];
-    glm::vec3 nval = oct_to_float32x3(sharedGBuffer[tmpTIdx].normal);
-    glm::vec3 pval = sharedGBuffer[tmpTIdx].pos;
+    glm::vec3 cval = sharedImage[idx];
+    glm::vec3 nval = oct_to_float32x3(sharedGBuffer[idx].normal);
+    glm::vec3 pval = sharedGBuffer[idx].pos;
     float cum_w = 0.f;
+    const float inv_c_phi = __fdividef(1.0f, c_phi * c_phi);
+    const float inv_n_phi = __fdividef(1.0f, n_phi * n_phi);
+    const float inv_p_phi = __fdividef(1.0f, p_phi * p_phi);
+    const float inv_stepWidth = __fdividef(1.0f, stepWidth * stepWidth);
     for (int i = -2; i < 3; i++) {
         for (int j = -2; j < 3; j++) {
-            tmpTIdx = i2col(ty + (j + 2) * blockDim.x, tx + (i + 2) * blockDim.x, arr_sizeX);
-            tmpIdx = i2col(y + j * stepWidth, x + i * stepWidth, resolution.x);
+            tmpTIdx = idx + j * blockDim.x * arr_sizeX + i * blockDim.x;
+            tmpIdx = index + j * stepWidth * resolution.x + i * stepWidth;
             if (tmpIdx < 0 || tmpIdx >= resolution.x * resolution.y)continue;
             glm::vec3 ctmp = sharedImage[tmpTIdx];
             glm::vec3 ntmp = oct_to_float32x3(sharedGBuffer[tmpTIdx].normal);
@@ -246,29 +258,29 @@ __global__ void ATrousFilterKernSharedLargeStWd(glm::ivec2 resolution, const glm
 
             glm::vec3 t = cval - ctmp;
             float dist2 = dot(t, t);
-            float c_w = glm::min(exp(-(dist2) / (c_phi * c_phi)), 1.f);
+            float c_w = glm::min(__expf(-(dist2)*inv_c_phi), 1.f);
 
             t = nval - ntmp;
-            dist2 = glm::max(dot(t, t) / (stepWidth * stepWidth), 0.f);
-            float n_w = glm::min(exp(-(dist2) / (n_phi * n_phi)), 1.f);
+            dist2 = glm::max(dot(t, t) * inv_stepWidth, 0.f);
+            float n_w = glm::min(__expf(-(dist2)*inv_n_phi), 1.f);
 
             t = pval - ptmp;
             dist2 = dot(t, t);
-            float p_w = glm::min(exp(-(dist2) / (p_phi * p_phi)), 1.f);
+            float p_w = glm::min(__expf(-(dist2)*inv_p_phi), 1.f);
 
             float weight = c_w * n_w * p_w * GaussianKernel[j + 2] * GaussianKernel[i + 2];
             sum += ctmp * weight;
             cum_w += weight;
         }
     }
-    outputCol[index] = sum / cum_w;
+    outputCol[index] = sum * __fdividef(1.0f, cum_w);
 }
 
 __device__ __inline__ float gaussianDistrib(int x, int y, float sigma) {
-    return exp(-(x * x + y * y) / (2.0f * sigma * sigma)) / (2.0f * PI * sigma * sigma);
+    return __expf(-(x * x + y * y) / (2.0f * sigma * sigma)) / (2.0f * PI * sigma * sigma);
 }
 
-__global__ void gaussianFilterKern(glm::ivec2 resolution, const glm::vec3* dev_image, glm::vec3* outputCol, int stepWidth, float sigma)
+__global__ void  gaussianFilterKern(glm::ivec2 resolution, const glm::vec3* dev_image, glm::vec3* outputCol, int stepWidth, float sigma)
 {
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -349,13 +361,10 @@ Denoiser::~Denoiser() {
 
 
 void Denoiser::filter(const glm::vec3* image, const GBufferPixel* gBuffer, int level, float c_phi, float n_phi, float p_phi, bool useSharedMemory) {
-    const dim3 blockSize2d(BLOCK_SIZE, BLOCK_SIZE);
-    const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
     int stepWidth = 1 << level;
     if (useSharedMemory) {
-        ATrousFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
-    }
-    else {
+        const dim3 blockSize2d(BLOCK_SIZE, BLOCK_SIZE);
+        const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
         if (BLOCK_SIZE < stepWidth) {
             const int arr_sizeX = BLOCK_SIZE * 5;
             ATrousFilterKernSharedLargeStWd << <blocksPerGrid2d, blockSize2d, arr_sizeX* arr_sizeX* (sizeof(glm::vec3) + sizeof(GBufferPixel)) >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
@@ -367,51 +376,32 @@ void Denoiser::filter(const glm::vec3* image, const GBufferPixel* gBuffer, int l
             checkCUDAError("ATrousFilterKernSharedSmallStWd");
         }
     }
+    else {
+        const dim3 blockSize2d(16, 16);
+        const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
+        ATrousFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
+    }
 }
 
 void Denoiser::gaussianBlur(const glm::vec3* image, int stepWidth, bool useSharedMemory) {
     const dim3 blockSize2d(BLOCK_SIZE, BLOCK_SIZE);
     const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
     if (useSharedMemory) {
-        gaussianFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, dev_outputCol, stepWidth, stepWidth * 0.33f);
-        checkCUDAError("gaussianFilterKern");
-    }
-    else {
         const int arr_sizeX = BLOCK_SIZE + 2 * stepWidth;
         gaussianFilterKernShared << <blocksPerGrid2d, blockSize2d, arr_sizeX* arr_sizeX * sizeof(glm::vec3) >> > (resolution, image, dev_outputCol, stepWidth, stepWidth * 0.33f);
         checkCUDAError("gaussianFilterKernShared");
+    }
+    else {
+        const dim3 blockSize2d(16, 16);
+        const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
+        gaussianFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, dev_outputCol, stepWidth, stepWidth * 0.33f);
+        checkCUDAError("gaussianFilterKern");
     }
 }
 
 
 //Kernel that writes the image to the OpenGL PBO directly.
 __global__ void sendImageToPBO(uchar4* pbo, glm::ivec2 resolution,
-    int iter, glm::vec3* image, bool acesFilm, bool NoGammaCorrection, bool Reinhard) {
-    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
-    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
-
-    if (x < resolution.x && y < resolution.y) {
-        int index = x + (y * resolution.x);
-        glm::vec3 pix = image[index] / (float)iter;
-
-        if (acesFilm)
-            pix = pix * (pix * (pix * 2.51f + 0.03f) + 0.024f) / (pix * (pix * 3.7f + 0.078f) + 0.14f);
-        if (Reinhard)
-            pix = pix / (1.f + pix);
-        if (!NoGammaCorrection)
-            pix = glm::pow(pix, glm::vec3(1.f / 2.2f));
-
-        glm::ivec3 color = glm::ivec3(glm::clamp(pix, 0.f, 1.f) * 255.0f);
-        // Each thread writes one pixel location in the texture (textel)
-        pbo[index].w = 0;
-        pbo[index].x = color.x;
-        pbo[index].y = color.y;
-        pbo[index].z = color.z;
-    }
-}
-
-//Kernel that writes the image to the OpenGL PBO directly.
-__global__ void sendDenoisedImageToPBO(uchar4* pbo, glm::ivec2 resolution,
     int iter, glm::vec3* image, bool acesFilm, bool NoGammaCorrection, bool Reinhard) {
     int x = (blockIdx.x * blockDim.x) + threadIdx.x;
     int y = (blockIdx.y * blockDim.y) + threadIdx.y;
@@ -697,7 +687,7 @@ __global__ void computeIntersections(
             if (sortByMaterial)
                 materialIndices[path_index] = intersections[path_index].materialId;
         }
-}
+    }
 }
 
 __global__ void shadeMaterial(
@@ -792,7 +782,7 @@ __global__ void shadeMaterial(
             pSeg.remainingBounces = 0;
             pSeg.pixelIndex = -1;
         }
-}
+    }
 }
 
 __global__ void generateGBuffer(
@@ -1013,7 +1003,7 @@ void pathtrace(int frame, int iter) {
         cudaMemcpy(hst_scene->state.image.data(), dev_image, pixelcount * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
 
     checkCUDAError("pathtrace");
-        }
+}
 
 // CHECKITOUT: this kernel "post-processes" the gbuffer/gbuffers into something that you can visualize for debugging.
 void showGBuffer(uchar4* pbo) {
@@ -1046,5 +1036,5 @@ void showDeNoisedImage(uchar4* pbo, int iter) {
         (cam.resolution.y + blockSize2d.y - 1) / blockSize2d.y);
 
     // Send results to OpenGL buffer for rendering
-    sendDenoisedImageToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, iter, dev_image_denoised, guiData->ACESFilm, guiData->NoGammaCorrection, guiData->Reinhard);
+    sendImageToPBO << <blocksPerGrid2d, blockSize2d >> > (pbo, cam.resolution, iter, dev_image_denoised, guiData->ACESFilm, guiData->NoGammaCorrection, guiData->Reinhard);
 }
