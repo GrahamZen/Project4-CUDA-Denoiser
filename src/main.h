@@ -35,6 +35,7 @@ extern bool ui_showGbuffer;
 extern bool ui_denoise;
 extern bool ui_gaussian;
 extern bool ui_shared;
+extern bool ui_atros_gauss;
 extern int ui_filterSize;
 extern float ui_colorWeight;
 extern float ui_normalWeight;

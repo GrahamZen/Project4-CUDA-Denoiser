@@ -27,6 +27,7 @@ float ui_colorWeight = 10.f;
 float ui_normalWeight = 0.0001;
 float ui_positionWeight = 0.1f;
 bool ui_shared = false;
+bool ui_atros_gauss = false;
 bool ui_saveAndExit = false;
 
 static bool camchanged = true;
@@ -212,7 +213,7 @@ void runCuda() {
             int level = glm::ceil(glm::log2((float)ui_filterSize));
             cudaMemcpy(dev_image_denoised, dev_image, width * height * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
             for (int i = 0; i < level; i++) {
-                denoiser->filter(dev_image_denoised, dev_gBuffer, i, ui_colorWeight, ui_normalWeight, ui_positionWeight, ui_shared);
+                denoiser->filter(dev_image_denoised, dev_gBuffer, i, ui_colorWeight, ui_normalWeight, ui_positionWeight, ui_shared, ui_atros_gauss);
                 std::swap(dev_image_denoised, denoiser->dev_outputCol);
             }
         }

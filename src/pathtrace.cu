@@ -117,6 +117,34 @@ __global__ void ATrousFilterKern(glm::ivec2 resolution, const glm::vec3* dev_ima
     }
 }
 
+__global__ void ATrousFilterGaussKern(glm::ivec2 resolution, const glm::vec3* dev_image, const GBufferPixel* gBuffer, glm::vec3* outputCol, int stepWidth)
+{
+    int x = (blockIdx.x * blockDim.x) + threadIdx.x;
+    int y = (blockIdx.y * blockDim.y) + threadIdx.y;
+    if (x < resolution.x && y < resolution.y) {
+        const int index = x + (y * resolution.x);
+        if (stepWidth == 0) {
+            outputCol[index] = dev_image[index];
+            return;
+        }
+        glm::vec3 sum(0.f);
+        float cum_w = 0.f;
+        int tmpIdx = 0;
+        for (int i = -2; i < 3; i++) {
+            for (int j = -2; j < 3; j++) {
+                tmpIdx = (x + i * stepWidth) + (y + j * stepWidth) * resolution.x;
+                if (tmpIdx < 0 || tmpIdx >= resolution.x * resolution.y)continue;
+                glm::vec3 ctmp = dev_image[tmpIdx];
+
+                float weight = GaussianKernel[j + 2] * GaussianKernel[i + 2];
+                sum += ctmp * weight;
+                cum_w += weight;
+            }
+        }
+        outputCol[index] = sum * __fdividef(1.0f, cum_w);
+    }
+}
+
 __global__ void ATrousFilterKernSharedSmallStWd(glm::ivec2 resolution, const glm::vec3* dev_image, const GBufferPixel* gBuffer, glm::vec3* outputCol,
     int stepWidth, float c_phi, float n_phi, float p_phi)
 {
@@ -360,7 +388,7 @@ Denoiser::~Denoiser() {
 }
 
 
-void Denoiser::filter(const glm::vec3* image, const GBufferPixel* gBuffer, int level, float c_phi, float n_phi, float p_phi, bool useSharedMemory) {
+void Denoiser::filter(const glm::vec3* image, const GBufferPixel* gBuffer, int level, float c_phi, float n_phi, float p_phi, bool useSharedMemory, bool gaussApprox) {
     int stepWidth = 1 << level;
     if (useSharedMemory) {
         const dim3 blockSize2d(BLOCK_SIZE, BLOCK_SIZE);
@@ -379,7 +407,10 @@ void Denoiser::filter(const glm::vec3* image, const GBufferPixel* gBuffer, int l
     else {
         const dim3 blockSize2d(16, 16);
         const dim3 blocksPerGrid2d((resolution.x + blockSize2d.x - 1) / blockSize2d.x, (resolution.y + blockSize2d.y - 1) / blockSize2d.y);
-        ATrousFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
+        if (gaussApprox)
+            ATrousFilterGaussKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, gBuffer, dev_outputCol, stepWidth);
+        else
+            ATrousFilterKern << <blocksPerGrid2d, blockSize2d >> > (resolution, image, gBuffer, dev_outputCol, stepWidth, c_phi, n_phi, p_phi);
     }
 }
 
