@@ -10,9 +10,38 @@ If you plan to use late days on this project (which we recommend), they will app
 
 **Summary:**
 
-In this project, you'll implement a CUDA-based path tracer capable of rendering globally-illuminated images very quickly.  Since in this class we are concerned with working in GPU programming, performance, and the generation of actual beautiful images (and not with mundane programming tasks like I/O), this project includes base code for loading a scene description file, described below, and various other things that generally make up a framework for previewing and saving images.
+In this project, you'll implement a pathtracing denoiser that uses geometry buffers (G-buffers) to guide a smoothing filter.
 
-The core renderer is left for you to implement. Finally, note that, while this base code is meant to serve as a strong starting point for a CUDA path tracer, you are not required to use it if you don't want to. You may also change any part of the base code as you please. **This is YOUR project.**
+We would like you to base your technique on the paper "Edge-Avoiding A-Trous Wavelet Transform for fast Global Illumination Filtering," by Dammertz, Sewtz, Hanika, and Lensch.
+You can find the paper here: https://jo.dreggn.org/home/2010_atrous.pdf
+
+Denoisers can help produce a smoother appearance in a pathtraced image with fewer samples-per-pixel/iterations, although the actual improvement often varies from scene-to-scene.
+Smoothing an image can be accomplished by blurring pixels - a simple pixel-by-pixel blur filter may sample the color from a pixel's neighbors in the image, weight them by distance, and write the result back into the pixel.
+
+However, just running a simple blur filter on an image often reduces the amount of detail, smoothing sharp edges. This can get worse as the blur filter gets larger, or with more blurring passes.
+Fortunately in a 3D scene, we can use per-pixel metrics to help the filter detect and preserve edges.
+
+| raw pathtraced image | simple blur | blur guided by G-buffers |
+|---|---|---|
+|![](img/noisy.png)|![](img/simple_blur.png)|![](img/denoised.png)|
+
+These per-pixel metrics can include scene geometry information (hence G-buffer), such as per-pixel normals and per-pixel positions, as well as surface color or albedo for preserving detail in mapped or procedural textures. For the purposes of this assignment we will only require per-pixel metrics from the "first bounce."
+
+ per-pixel normals | per-pixel positions (scaled down) | ???! (dummy data, time-of-flight)|
+|---|---|---|
+|![](img/normals.png)|![](img/positions.png)|![](img/time-of-flight.png)|
+
+## Building on Project 3 CUDA Path Tracer
+
+**We highly recommend that you integrate denoising into your Project 3 CUDA Path Tracers.**
+
+This project's base code is forked from the CUDA Path Tracer basecode in Project 3, and exists so that the
+assignment can stand on its own as well as provide some guidance on how to implement some useful tools.
+The main changes are that we have added some GUI controls, a *very* simple pathtracer without stream
+compaction, and G-buffer with some dummy data in it.
+
+You may choose to use the base code in this project as a reference, playground, or as the base code for your denoiser. Using it as a reference or playground will allow you to understand the changes that you need for integrating the denoiser.
+Like Project 3, you may also change any part of the base code as you please. **This is YOUR project.**
 
 **Recommendations:**
 
@@ -25,11 +54,14 @@ The core renderer is left for you to implement. Finally, note that, while this b
 * `src/` C++/CUDA source files.
 * `scenes/` Example scene description files.
 * `img/` Renders of example scene description files. (These probably won't match precisely with yours.)
+  * note that we have added a `cornell_ceiling_light` scene
+  * simple pathtracers often benefit from scenes with very large lights
 * `external/` Includes and static libraries for 3rd party libraries.
+* `imgui/` Library code from https://github.com/ocornut/imgui
 
 ## Running the code
 
-The main function requires a scene description file. Call the program with one as an argument: `cis565_path_tracer scenes/sphere.txt`. (In Visual Studio, `../scenes/sphere.txt`.)
+The main function requires a scene description file. Call the program with one as an argument: `cis565_denoiser scenes/cornell_ceiling_light.txt`. (In Visual Studio, `../scenes/cornell_ceiling_light.txt`.)
 
 If you are using Visual Studio, you can set this in the `Debugging > Command Arguments` section in the `Project Properties`. Make sure you get the path right - read the console for errors.
 
@@ -166,20 +198,10 @@ You'll be working in the following files. Look for important parts of the code:
 * Search for `CHECKITOUT`.
 * You'll have to implement parts labeled with `TODO`. (But don't let these constrain you - you have free rein!)
 
-* `src/pathtrace.cu`: path tracing kernels, device functions, and calling code
-  * `pathtraceInit` initializes the path tracer state - it should copy scene data (e.g. geometry, materials) from `Scene`.
-  * `pathtraceFree` frees memory allocated by `pathtraceInit`
-  * `pathtrace` performs one iteration of the rendering - it handles kernel launches, memory copies, transferring some data, etc.
-    * See comments for a low-level path tracing recap.
-* `src/intersections.h`: ray intersection functions
-  * `boxIntersectionTest` and `sphereIntersectionTest`, which take in a ray and a geometry object and return various properties of the intersection.
-* `src/interactions.h`: ray scattering functions
-  * `calculateRandomDirectionInHemisphere`: a cosine-weighted random direction in a hemisphere. Needed for implementing diffuse surfaces.
-  * `scatterRay`: this function should perform all ray scattering, and will call `calculateRandomDirectionInHemisphere`. See comments for details.
-* `src/main.cpp`: you don't need to do anything here, but you can change the program to save `.hdr` image files, if you want (for postprocessing).
-* `stream_compaction`: A dummy folder into which you should place your Stream Compaction implementation from Project 2. It should be sufficient to copy the files from [here](https://github.com/CIS565-Fall-2018/Project2-Stream-Compaction/tree/master/stream_compaction)
+Requirements
+===
 
-### Generating random numbers
+**Ask in Ed for clarifications.**
 
 ```cpp
 thrust::default_random_engine rng(hash(index));
@@ -187,42 +209,45 @@ thrust::uniform_real_distribution<float> u01(0, 1);
 float result = u01(rng);
 ```
 
-There is a convenience function for generating a random engine using a
-combination of index, iteration, and depth as the seed:
+One meta-goal for this project is to help you gain some experience in reading technical papers and implementing their concepts. This is an important skill in graphics software engineering, and will also be helpful for your final projects.
 
 ```cpp
 thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, path.remainingBounces);
 ```
 
-### Imperfect specular lighting
+Try to look up anything that you don't understand, and feel free to discuss with your fellow students on Ed. We were also able to locate presentation slides for this paper that may be helpful: https://www.highperformancegraphics.org/previous/www_2010/media/RayTracing_I/HPG2010_RayTracing_I_Dammertz.pdf
 
-In path tracing, like diffuse materials, specular materials are simulated using a probability distribution instead computing the strength of a ray bounce based on angles.
+This paper is also helpful in that it includes a code sample illustrating some of the math, although not
+all the details are given away - for example, parameter tuning in denoising can be very implementation-dependent.
 
-Equations 7, 8, and 9 of [*GPU Gems 3*, Chapter 20](https://developer.nvidia.com/gpugems/gpugems3/part-iii-rendering/chapter-20-gpu-based-importance-sampling) give the formulas for generating a random specular ray. (Note that there is a typographical error: χ in the text = ξ in the formulas.)
+This project will focus on this paper, however, it may be helpful to read some of the references as well as
+more recent papers on denoising, such as "Spatiotemporal Variance-Guided Filtering" from NVIDIA, available here: https://research.nvidia.com/publication/2017-07_Spatiotemporal-Variance-Guided-Filtering%3A
 
-Also see the notes in `scatterRay` for probability splits between diffuse/specular/other material types.
+## Part 2 - A-trous wavelet filter
 
-See also: PBRT 8.2.2.
+Implement the A-trous wavelet filter from the paper. :shrug:
 
-### Hierarchical spatial datastructures
+It's always good to break down techniques into steps that you can individually verify.
+Such a breakdown for this paper could include:
+1. add UI controls to your project - we've done this for you in this base code, but see `Base Code Tour`
+1. implement G-Buffers for normals and positions and visualize them to confirm (see `Base Code Tour`)
+1. implement the A-trous kernel and its iterations without weighting and compare with a a blur applied from, say, GIMP or Photoshop
+1. use the G-Buffers to preserve perceived edges
+1. tune parameters to see if they respond in ways that you expect
+1. test more advanced scenes
 
-One method for avoiding checking a ray against every primitive in the scene or every triangle in a mesh is to bin the primitives in a hierarchical spatial datastructure such as an [octree](https://en.wikipedia.org/wiki/Octree).
+## Base Code Tour
 
-Ray-primitive intersection then involves recursively testing the ray against bounding volumes at different levels in the tree until a leaf containing a subset of primitives/triangles is reached, at which point the ray is checked against all the primitives/triangles in the leaf.
+This base code is derived from Project 3. Some notable differences:
 
-* We highly recommend building the datastructure on the CPU and encapsulating the tree buffers into their own struct, with its own dedicated GPU memory management functions.
-* We highly recommend working through your tree construction algorithm by hand with a couple cases before writing any actual code.
-  * How does the algorithm distribute triangles uniformly distributed in space?
-  * What if the model is a perfect axis-aligned cube with 12 triangles in 6 faces? This test can often bring up numerous edge cases!
-* Note that traversal on the GPU must be coded iteratively!
-* Good execution on the GPU requires tuning the maximum tree depth. Make this configurable from the start.
-* If a primitive spans more than one leaf cell in the datastructure, it is sufficient for this project to count the primitive in each leaf cell.
-
-### Handling Long-Running CUDA Threads
-
-By default, your GPU driver will probably kill a CUDA kernel if it runs for more than 5 seconds. There's a way to disable this timeout. Just beware of infinite loops - they may lock up your computer.
-
-> The easiest way to disable TDR for Cuda programming, assuming you have the NVIDIA Nsight tools installed, is to open the Nsight Monitor, click on "Nsight Monitor options", and under "General" set "WDDM TDR enabled" to false. This will change the registry setting for you. Close and reboot. Any change to the TDR registry setting won't take effect until you reboot. [Stack Overflow](http://stackoverflow.com/questions/497685/cuda-apps-time-out-fail-after-several-seconds-how-to-work-around-this)
+* `src/pathtrace.cu` - we've added functions `showGBuffer` and `showImage` to help you visualize G-Buffer info and your denoised results. There's also a `generateGBuffer` kernel on the first bounce of `pathtrace`.
+* `src/sceneStructs.h` - there's a new `GBufferPixel` struct
+  * the term G-buffer is more common in the world of rasterizing APIs like OpenGL or WebGL, where many G-buffers may be needed due to limited pixel channels (RGB, RGBA)
+  * in CUDA we can pack everything into one G-buffer with comparatively huge pixels.
+  * at the moment this just contains some dummy "time-to-intersect" data so you can see how `showGBuffer` works.
+* `src/main.h` and `src/main.cpp` - we've added a bunch of `ui_` variables - these connect to the UI sliders in `src/preview.cpp`, and let you toggle between `showGBuffer` and `showImage`, among other things.
+* `scenes` - we've added `cornell_ceiling_light.txt`, which uses a much larger light and fewer iterations. This can be a good scene to start denoising with, since even in the first iteration many rays will terminate at the light.
+* As usual, be sure to search across the project for `CHECKITOUT` and `TODO`
 
 ### Scene File Format
 
@@ -230,41 +255,23 @@ By default, your GPU driver will probably kill a CUDA kernel if it runs for more
 
 This project uses a custom scene description format. Scene files are flat text files that describe all geometry, materials, lights, cameras, and render settings inside of the scene. Items in the format are delimited by new lines, and comments can be added using C-style `// comments`.
 
-Materials are defined in the following fashion:
+Note that "acceptably smooth" is somewhat subjective - we will leave the means for image comparison up to you, but image diffing tools may be a good place to start, and can help visually convey differences between two images.
 
-* MATERIAL (material ID) //material header
-* RGB (float r) (float g) (float b) //diffuse color
-* SPECX (float specx) //specular exponent
-* SPECRGB (float r) (float g) (float b) //specular color
-* REFL (bool refl) //reflectivity flag, 0 for no, 1 for yes
-* REFR (bool refr) //refractivity flag, 0 for no, 1 for yes
-* REFRIOR (float ior) //index of refraction for Fresnel effects
-* EMITTANCE (float emittance) //the emittance strength of the material. Material is a light source iff emittance > 0.
+Extra Credit
+===
 
-Cameras are defined in the following fashion:
+The following extra credit items are listed roughly in order of level-of-effort, and are just suggestions - if you have an idea for something else you want to add, just ask on Ed!
 
-* CAMERA //camera header
-* RES (float x) (float y) //resolution
-* FOVY (float fovy) //vertical field of view half-angle. the horizonal angle is calculated from this and the reslution
-* ITERATIONS (float interations) //how many iterations to refine the image
-* DEPTH (int depth) //maximum depth (number of times the path will bounce)
-* FILE (string filename) //file to output render to upon completion
-* EYE (float x) (float y) (float z) //camera's position in worldspace
-* LOOKAT (float x) (float y) (float z) //point in space that the camera orbits around and points at
-* UP (float x) (float y) (float z) //camera's up vector
 
-Objects are defined in the following fashion:
+## G-Buffer optimization
 
-* OBJECT (object ID) //object header
-* (cube OR sphere OR mesh) //type of object, can be either "cube", "sphere", or "mesh". Note that cubes and spheres are unit sized and centered at the origin.
-* material (material ID) //material to assign this object
-* TRANS (float transx) (float transy) (float transz) //translation
-* ROTAT (float rotationx) (float rotationy) (float rotationz) //rotation
-* SCALE (float scalex) (float scaley) (float scalez) //scale
+When starting out with gbuffers, it's probably easiest to start storing per-pixel positions and normals as glm::vec3s. However, this can be a decent amount of per-pixel data, which must be read from memory.
 
-Two examples are provided in the `scenes/` directory: a single emissive sphere, and a simple cornell box made using cubes for walls and lights and a sphere in the middle. You may want to add to this file for features you implement. (DOF, Anti-aliasing, etc...)
+Implement methods to store positions and normals more compactly. Two places to start include:
+* storing Z-depth instead of position, and reconstruct position based on pixel coordinates and an inverted projection matrix
+* oct-encoding normals: http://jcgt.org/published/0003/02/01/paper.pdf
 
-## Third-Party Code Policy
+Be sure to provide performance comparison numbers between optimized and unoptimized implementations.
 
 * Use of any third-party code must be approved by asking on our Ed Discussion.
 * If it is approved, all students are welcome to use it. Generally, we approve use of third-party code that is not a core part of the project. For example, for the path tracer, we would approve using a third-party library for loading models, but would not approve copying and pasting a CUDA function for doing refraction.
@@ -272,9 +279,9 @@ Two examples are provided in the `scenes/` directory: a single emissive sphere, 
 * Using third-party code without its approval, including using another student's code, is an academic integrity violation, and will, at minimum, result in you receiving an F for the semester.
 * You may use third-party 3D models and scenes in your projects. Be sure to provide the right attribution as requested by the creators.
 
-## README
+Dammertz-et-al mention in their section 2.2 that A-trous filtering is a means for approximating gaussian filtering. Implement gaussian filtering and compare with A-trous to see if one method is significantly faster. Also note any visual differences in your results.
 
-Please see: [**TIPS FOR WRITING AN AWESOME README**](https://github.com/pjcozzi/Articles/blob/master/CIS565/GitHubRepo/README.md)
+## Shared Memory Filtering
 
 * Sell your project.
 * Assume the reader has a little knowledge of path tracing - don't go into detail explaining what it is. Focus on your project.
@@ -284,7 +291,8 @@ Please see: [**TIPS FOR WRITING AN AWESOME README**](https://github.com/pjcozzi/
   * It is a crucial part of the project, and we will not be able to grade you without a good README.
   * Generating images will take time. Be sure to account for it!
 
-In addition:
+Be sure to provide performance comparison numbers between implementations with and without shared memory.
+Also pay attention to how shared memory use impacts the block size for your kernels, and how this may change as the filter width changes.
 
 * This is a renderer, so include images that you've made!
 * Be sure to back your claims for optimization with numbers and comparisons.
@@ -292,17 +300,18 @@ In addition:
 * You wil not be graded on how fast your path tracer runs, but getting close to real-time is always nice!
 * If you have a fast GPU renderer, it is very good to show case this with a video to show interactivity. If you do so, please include a link!
 
-### Analysis
+High-performance raytracers in dynamic applications (like games, or real-time visualization engines) now often use temporal sampling, borrowing and repositioning samples from previous frames so that each frame effectively only computes 1 sample-per-pixel but can denoise from many frames.
 
 * Stream compaction helps most after a few bounces. Print and plot the effects of stream compaction within a single iteration (i.e. the number of unterminated rays after each bounce) and evaluate the benefits you get from stream compaction.
 * Compare scenes which are open (like the given cornell box) and closed (i.e. no light can escape the scene). Again, compare the performance effects of stream compaction! Remember, stream compaction only affects rays which terminate, so what might you expect?
 * For optimizations that target specific kernels, we recommend using stacked bar graphs to convey total execution time and improvements in individual kernels. For example:
 
-  ![Clearly the Macchiato is optimal.](img/stacked_bar_graph.png)
+Note that our basic pathtracer doesn't do animation, so you will also need to implement some kind of dynamic aspect in your scene - this may be as simple as an automated panning camera, or as complex as translating models.
 
-  Timings from NSight should be very useful for generating these kinds of charts.
+See https://research.nvidia.com/publication/2017-07_Spatiotemporal-Variance-Guided-Filtering%3A for more details.
 
-## Submit
+Submission
+===
 
 If you have modified any of the `CMakeLists.txt` files at all (aside from the list of `SOURCE_FILES`), mentions it explicity.
 
@@ -321,7 +330,8 @@ The template of the comment section of your pull request is attached below, you 
   * ...
 * Feedback on the project itself, if any.
 
-## References
+References
+===
 
 * [PBRT] Physically Based Rendering, Second Edition: From Theory To Implementation. Pharr, Matt and Humphreys, Greg. 2010.
 * Antialiasing and Raytracing. Chris Cooksey and Paul Bourke, http://paulbourke.net/miscellaneous/aliasing/
