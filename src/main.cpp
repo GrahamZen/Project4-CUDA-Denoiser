@@ -1,10 +1,7 @@
 #include "main.h"
 #include "preview.h"
 #include <cstring>
-
-#include "../imgui/imgui.h"
-#include "../imgui/imgui_impl_glfw.h"
-#include "../imgui/imgui_impl_opengl3.h"
+#include "scene.h"
 
 static std::string startTimeString;
 
@@ -24,10 +21,14 @@ int startupIterations = 0;
 int lastLoopIterations = 0;
 bool ui_showGbuffer = false;
 bool ui_denoise = false;
-int ui_filterSize = 80;
-float ui_colorWeight = 0.45f;
-float ui_normalWeight = 0.35f;
-float ui_positionWeight = 0.2f;
+int ui_denoise_cnt = 0;
+bool ui_gaussian = false;
+int ui_filterSize = 32;
+float ui_colorWeight = 10.f;
+float ui_normalWeight = 0.0001;
+float ui_positionWeight = 0.1f;
+bool ui_shared = false;
+bool ui_atros_gauss = false;
 bool ui_saveAndExit = false;
 
 static bool camchanged = true;
@@ -38,8 +39,14 @@ float zoom, theta, phi;
 glm::vec3 cameraPosition;
 glm::vec3 ogLookAt; // for recentering the camera
 
-Scene *scene;
-RenderState *renderState;
+Scene* scene;
+GuiDataContainer* guiData;
+RenderState* renderState;
+Denoiser* denoiser;
+extern glm::vec3* dev_image;
+extern glm::vec3* dev_image_denoised;
+extern GBufferPixel* dev_gBuffer;
+
 int iteration;
 
 int width;
@@ -50,24 +57,33 @@ int height;
 //-------------------------------
 
 int main(int argc, char** argv) {
+    cudaDeviceProp deviceProp;
+    int device;
+    cudaGetDevice(&device);
+    cudaGetDeviceProperties(&deviceProp, device);
+
+    std::cout << "Shared memory per block: " << deviceProp.sharedMemPerBlock << " bytes" << std::endl;
+
     startTimeString = currentTimeString();
 
-    if (argc < 2) {
-        printf("Usage: %s SCENEFILE.txt\n", argv[0]);
-        return 1;
+    const char* sceneFile = "";
+    if (argc >= 2) {
+        sceneFile = argv[1];
     }
-
-    const char *sceneFile = argv[1];
 
     // Load scene file
     scene = new Scene(sceneFile);
 
+    //Create Instance for ImGUIData
+    guiData = new GuiDataContainer();
+
     // Set up camera stuff from loaded path tracer settings
     iteration = 0;
     renderState = &scene->state;
-    Camera &cam = renderState->camera;
+    Camera& cam = renderState->camera;
     width = cam.resolution.x;
     height = cam.resolution.y;
+    denoiser = new Denoiser{ glm::ivec2(width, height) };
 
     ui_iterations = renderState->iterations;
     startupIterations = ui_iterations;
@@ -91,9 +107,14 @@ int main(int argc, char** argv) {
     // Initialize CUDA and GL components
     init();
 
+    // Initialize ImGui Data
+    InitImguiData(guiData);
+    InitDataContainer(guiData, scene);
+
     // GLFW main loop
     mainLoop();
 
+    delete denoiser;
     return 0;
 }
 
@@ -105,14 +126,21 @@ void saveImage() {
     for (int x = 0; x < width; x++) {
         for (int y = 0; y < height; y++) {
             int index = x + (y * width);
-            glm::vec3 pix = renderState->image[index];
-            img.setPixel(width - 1 - x, y, glm::vec3(pix) / samples);
+            glm::vec3 pix = renderState->image[index] / samples;
+            if (guiData->ACESFilm)
+                pix = pix * (pix * (pix * 2.51f + 0.03f) + 0.024f) / (pix * (pix * 3.7f + 0.078f) + 0.14f);
+            if (guiData->Reinhard)
+                pix = pix / (1.f + pix);
+            if (!guiData->NoGammaCorrection)
+                pix = glm::pow(pix, glm::vec3(1.f / 2.2f));
+
+            img.setPixel(width - 1 - x, y, glm::vec3(pix));
         }
     }
 
     std::string filename = renderState->imageName;
     std::ostringstream ss;
-    ss << filename << "." << startTimeString << "." << samples << "samp";
+    ss << filename << "." << startTimeString << "." << samples << "samp" << "." << ui_filterSize << "filterSize" << "." << ui_colorWeight << "c_w" << "." << ui_normalWeight << "n_w" << "." << ui_positionWeight << "p_w";
     filename = ss.str();
 
     // CHECKITOUT
@@ -122,13 +150,20 @@ void saveImage() {
 
 void runCuda() {
     if (lastLoopIterations != ui_iterations) {
-      lastLoopIterations = ui_iterations;
-      camchanged = true;
+        lastLoopIterations = ui_iterations;
+        camchanged = true;
     }
-
+    if (ValueChanged()) {
+        camchanged = true;
+        phi = guiData->phi;
+        theta = guiData->theta;
+        renderState->camera.lookAt = guiData->cameraLookAt;
+        zoom = guiData->zoom;
+        ResetValueChanged();
+    }
     if (camchanged) {
         iteration = 0;
-        Camera &cam = renderState->camera;
+        Camera& cam = renderState->camera;
         cameraPosition.x = zoom * sin(phi) * sin(theta);
         cameraPosition.y = zoom * cos(theta);
         cameraPosition.z = zoom * cos(phi) * sin(theta);
@@ -144,7 +179,9 @@ void runCuda() {
         cameraPosition += cam.lookAt;
         cam.position = cameraPosition;
         camchanged = false;
-      }
+        renderState->isCached = false;
+        UpdateDataContainer(guiData, scene, zoom, theta, phi);
+    }
 
     // Map OpenGL buffer object for writing from CUDA on a single GPU
     // No data is moved (Win & Linux). When mapped to CUDA, OpenGL should not use this buffer
@@ -154,7 +191,7 @@ void runCuda() {
         pathtraceInit(scene);
     }
 
-    uchar4 *pbo_dptr = NULL;
+    uchar4* pbo_dptr = NULL;
     cudaGLMapBufferObject((void**)&pbo_dptr, pbo);
 
     if (iteration < ui_iterations) {
@@ -166,10 +203,42 @@ void runCuda() {
     }
 
     if (ui_showGbuffer) {
-      showGBuffer(pbo_dptr);
-    } else {
-      showImage(pbo_dptr, iteration);
+        showGBuffer(pbo_dptr);
     }
+    else if (ui_denoise && iteration == ui_iterations) {
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        cudaEventRecord(start);
+        if (ui_gaussian) {
+            denoiser->gaussianBlur(dev_image, ui_filterSize * 2.f, ui_shared);
+            std::swap(dev_image_denoised, denoiser->dev_outputCol);
+        }
+        else {
+            int level = glm::ceil(glm::log2((float)ui_filterSize));
+            cudaMemcpy(dev_image_denoised, dev_image, width * height * sizeof(glm::vec3), cudaMemcpyDeviceToDevice);
+            for (int i = 0; i < level; i++) {
+                denoiser->filter(dev_image_denoised, dev_gBuffer, i, ui_colorWeight, ui_normalWeight, ui_positionWeight, ui_shared, ui_atros_gauss);
+                std::swap(dev_image_denoised, denoiser->dev_outputCol);
+            }
+        }
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&guiData->DenoiseRealTime, start, stop);
+        ui_denoise_cnt += 1;
+        guiData->DenoiseTime += guiData->DenoiseRealTime;
+        showDeNoisedImage(pbo_dptr, iteration);
+    }
+    else {
+        showImage(pbo_dptr, iteration);
+    }
+    if (guiData->Sync) {
+        if(ui_denoise)
+            cudaMemcpy(renderState->image.data(), dev_image_denoised, width * height * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
+        else
+            cudaMemcpy(renderState->image.data(), dev_image, width * height * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
+    }
+
 
     // unmap buffer object
     cudaGLUnmapBufferObject(pbo);
@@ -184,59 +253,72 @@ void runCuda() {
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS) {
-      switch (key) {
-      case GLFW_KEY_ESCAPE:
-        saveImage();
-        glfwSetWindowShouldClose(window, GL_TRUE);
-        break;
-      case GLFW_KEY_S:
-        saveImage();
-        break;
-      case GLFW_KEY_SPACE:
-        camchanged = true;
-        renderState = &scene->state;
-        Camera &cam = renderState->camera;
-        cam.lookAt = ogLookAt;
-        break;
-      }
+        switch (key) {
+        case GLFW_KEY_Q:
+            camchanged = true;
+            renderState->camera.lookAt += glm::vec3(0, 0.1, 0);
+            break;
+        case GLFW_KEY_E:
+            camchanged = true;
+            renderState->camera.lookAt += glm::vec3(0, -0.1, 0);
+            break;
+        case GLFW_KEY_ESCAPE:
+            saveImage();
+            glfwSetWindowShouldClose(window, GL_TRUE);
+            break;
+        case GLFW_KEY_S:
+            saveImage();
+            break;
+        case GLFW_KEY_SPACE:
+            camchanged = true;
+            renderState = &scene->state;
+            Camera& cam = renderState->camera;
+            cam.lookAt = ogLookAt;
+            break;
+        }
     }
 }
 
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
-  if (ImGui::GetIO().WantCaptureMouse) return;
-  leftMousePressed = (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS);
-  rightMousePressed = (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS);
-  middleMousePressed = (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS);
+    if (MouseOverImGuiWindow())
+    {
+        renderState->camera.focalLength = guiData->focalLength;
+        renderState->camera.apertureSize = guiData->apertureSize;
+        return;
+    }
+    leftMousePressed = (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS);
+    rightMousePressed = (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS);
+    middleMousePressed = (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS);
 }
 
 void mousePositionCallback(GLFWwindow* window, double xpos, double ypos) {
-  if (xpos == lastX || ypos == lastY) return; // otherwise, clicking back into window causes re-start
-  if (leftMousePressed) {
-    // compute new camera parameters
-    phi -= (xpos - lastX) / width;
-    theta -= (ypos - lastY) / height;
-    theta = std::fmax(0.001f, std::fmin(theta, PI));
-    camchanged = true;
-  }
-  else if (rightMousePressed) {
-    zoom += (ypos - lastY) / height;
-    zoom = std::fmax(0.1f, zoom);
-    camchanged = true;
-  }
-  else if (middleMousePressed) {
-    renderState = &scene->state;
-    Camera &cam = renderState->camera;
-    glm::vec3 forward = cam.view;
-    forward.y = 0.0f;
-    forward = glm::normalize(forward);
-    glm::vec3 right = cam.right;
-    right.y = 0.0f;
-    right = glm::normalize(right);
+    if (xpos == lastX || ypos == lastY) return; // otherwise, clicking back into window causes re-start
+    if (leftMousePressed) {
+        // compute new camera parameters
+        phi -= (xpos - lastX) / width;
+        theta -= (ypos - lastY) / height;
+        theta = std::fmax(0.001f, std::fmin(theta, PI));
+        camchanged = true;
+    }
+    else if (rightMousePressed) {
+        zoom += (ypos - lastY) / height;
+        zoom = std::fmax(0.1f, zoom);
+        camchanged = true;
+    }
+    else if (middleMousePressed) {
+        renderState = &scene->state;
+        Camera& cam = renderState->camera;
+        glm::vec3 forward = cam.view;
+        forward.y = 0.0f;
+        forward = glm::normalize(forward);
+        glm::vec3 right = cam.right;
+        right.y = 0.0f;
+        right = glm::normalize(right);
 
-    cam.lookAt -= (float) (xpos - lastX) * right * 0.01f;
-    cam.lookAt += (float) (ypos - lastY) * forward * 0.01f;
-    camchanged = true;
-  }
-  lastX = xpos;
-  lastY = ypos;
+        cam.lookAt -= (float)(xpos - lastX) * right * 0.01f;
+        cam.lookAt += (float)(ypos - lastY) * forward * 0.01f;
+        camchanged = true;
+    }
+    lastX = xpos;
+    lastY = ypos;
 }

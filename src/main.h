@@ -18,9 +18,6 @@
 #include "image.h"
 #include "pathtrace.h"
 #include "utilities.h"
-#include "scene.h"
-
-using namespace std;
 
 //-------------------------------
 //----------PATH TRACER----------
@@ -36,6 +33,10 @@ extern int ui_iterations;
 extern int startupIterations;
 extern bool ui_showGbuffer;
 extern bool ui_denoise;
+extern int ui_denoise_cnt;
+extern bool ui_gaussian;
+extern bool ui_shared;
+extern bool ui_atros_gauss;
 extern int ui_filterSize;
 extern float ui_colorWeight;
 extern float ui_normalWeight;
@@ -43,6 +44,6 @@ extern float ui_positionWeight;
 extern bool ui_saveAndExit;
 
 void runCuda();
-void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods);
+void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
 void mousePositionCallback(GLFWwindow* window, double xpos, double ypos);
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);

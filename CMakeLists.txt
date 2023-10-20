@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.1)
 
-project(cis565_denoiser)
+project(cis565_path_tracer)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -11,7 +11,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 # Enable C++11 for host code
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 
 # Set a default build type if none was specified
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -23,9 +23,9 @@ endif()
 ########################################
 # CUDA Setup
 ########################################
-find_package(CUDA 10 REQUIRED)
+find_package(CUDA 12 REQUIRED)
 include(${CMAKE_MODULE_PATH}/CUDAComputesList.cmake)
-
+set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} --extended-lambda)
 list(APPEND CUDA_NVCC_FLAGS ${CUDA_GENERATE_CODE})
 list(APPEND CUDA_NVCC_FLAGS_DEBUG "-g -G")
 set(CUDA_VERBOSE_BUILD ON)
@@ -65,14 +65,25 @@ include_directories(${GLM_INCLUDE_DIRS})
 set(headers
     src/main.h
     src/image.h
-    src/interactions.h
     src/intersections.h
     src/glslUtility.hpp
     src/pathtrace.h
     src/scene.h
     src/sceneStructs.h
     src/preview.h
+    src/material.h
     src/utilities.h
+    src/ImGui/imconfig.h
+	
+	src/ImGui/imgui.h
+    src/ImGui/imconfig.h
+    src/ImGui/imgui_impl_glfw.h
+     src/ImGui/imgui_impl_opengl3.h 
+     src/ImGui/imgui_impl_opengl3_loader.h 
+     src/ImGui/imgui_internal.h 
+     src/ImGui/imstb_rectpack.h 
+     src/ImGui/imstb_textedit.h 
+     src/ImGui/imstb_truetype.h 
     )
 
 set(sources
@@ -84,35 +95,27 @@ set(sources
     src/scene.cpp
     src/preview.cpp
     src/utilities.cpp
-    )
-
-set(imgui
-    imgui/imconfig.h
-    imgui/imgui.cpp
-    imgui/imgui.h
-    imgui/imgui_draw.cpp
-    imgui/imgui_internal.h
-    imgui/imgui_widgets.cpp
-    imgui/imgui_demo.cpp
-    imgui/imgui_impl_glfw.cpp
-    imgui/imgui_impl_glfw.h
-    imgui/imgui_impl_opengl2.cpp
-    imgui/imgui_impl_opengl2.h
-    imgui/imgui_impl_opengl3.cpp
-    imgui/imgui_impl_opengl3.h
+    src/bvh.cpp
+	
+    src/ImGui/imgui.cpp 
+      src/ImGui/imgui_demo.cpp 
+      src/ImGui/imgui_draw.cpp 
+     src/ImGui/imgui_impl_glfw.cpp 
+     src/ImGui/imgui_impl_opengl3.cpp 
+     src/ImGui/imgui_tables.cpp 
+     src/ImGui/imgui_widgets.cpp 
     )
 
 list(SORT headers)
 list(SORT sources)
-list(SORT imgui)
 
 source_group(Headers FILES ${headers})
 source_group(Sources FILES ${sources})
-source_group(imgui FILES ${imgui})
 
+#add_subdirectory(src/ImGui)
 #add_subdirectory(stream_compaction)  # TODO: uncomment if using your stream compaction
 
-cuda_add_executable(${CMAKE_PROJECT_NAME} ${sources} ${headers} ${imgui})
+cuda_add_executable(${CMAKE_PROJECT_NAME} ${sources} ${headers})
 target_link_libraries(${CMAKE_PROJECT_NAME}
     ${LIBRARIES}
     #stream_compaction  # TODO: uncomment if using your stream compaction
