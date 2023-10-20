@@ -236,12 +236,12 @@ void RenderImGui(int windowWidth, int windowHeight)
 
     ImGui::Checkbox("Denoise", &ui_denoise);
     ImGui::SameLine();
-    ImGui::Checkbox("Gaussian Approximation", &ui_atros_gauss);
-    ImGui::Checkbox("Gaussian", &ui_gaussian);
+    bool atros_gaussChanged = ImGui::Checkbox("Gaussian Approximation", &ui_atros_gauss);
+    bool gaussianChanged = ImGui::Checkbox("Gaussian", &ui_gaussian);
     ImGui::SameLine();
-    ImGui::Checkbox("Enable Shared Memory", &ui_shared);
+    bool sharedChanged = ImGui::Checkbox("Enable Shared Memory", &ui_shared);
 
-    ImGui::DragInt("Filter Size", &ui_filterSize, 1, 0, 100);
+    bool filterSizeChanged = ImGui::DragInt("Filter Size", &ui_filterSize, 1, 0, 100);
     ImGui::DragFloat("Color Weight", &ui_colorWeight, 0.1f, 0.0f, 100.0f, "%.4f");
     ImGui::DragFloat("Normal Weight", &ui_normalWeight, 0.1f, 0.0f, 1.0f, "%.4f");
     ImGui::DragFloat("Position Weight", &ui_positionWeight, 0.1f, 0.0f, 1.0f, "%.4f");
@@ -277,6 +277,8 @@ void RenderImGui(int windowWidth, int windowHeight)
     }
     ImGui::Text("Traced Depth %d", imguiData->TracedDepth);
     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+    ImGui::Text("Denoise average %.3f ms/frame", imguiData->DenoiseTime / ui_denoise_cnt);
+    ImGui::Text("Denoise %.3f ms/frame", imguiData->DenoiseRealTime);
     ImGui::Text("Number of triangles %d", scene->geoms.size());
     ImGui::End();
 
@@ -286,6 +288,10 @@ void RenderImGui(int windowWidth, int windowHeight)
 
     if (focalLengthChanged || apertureSizeChanged || cameraPhiChanged || cameraThetaChanged || cameraLookAtChanged || zoomChanged || cacheFirstBounce) {
         valChanged = true;
+    }
+    if (filterSizeChanged || atros_gaussChanged || gaussianChanged || sharedChanged) {
+        ui_denoise_cnt = 0;
+        imguiData->DenoiseTime = 0;
     }
 }
 

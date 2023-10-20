@@ -21,6 +21,7 @@ int startupIterations = 0;
 int lastLoopIterations = 0;
 bool ui_showGbuffer = false;
 bool ui_denoise = false;
+int ui_denoise_cnt = 0;
 bool ui_gaussian = false;
 int ui_filterSize = 32;
 float ui_colorWeight = 10.f;
@@ -205,6 +206,10 @@ void runCuda() {
         showGBuffer(pbo_dptr);
     }
     else if (ui_denoise && iteration == ui_iterations) {
+        cudaEvent_t start, stop;
+        cudaEventCreate(&start);
+        cudaEventCreate(&stop);
+        cudaEventRecord(start);
         if (ui_gaussian) {
             denoiser->gaussianBlur(dev_image, ui_filterSize * 2.f, ui_shared);
             std::swap(dev_image_denoised, denoiser->dev_outputCol);
@@ -217,11 +222,23 @@ void runCuda() {
                 std::swap(dev_image_denoised, denoiser->dev_outputCol);
             }
         }
+        cudaEventRecord(stop);
+        cudaEventSynchronize(stop);
+        cudaEventElapsedTime(&guiData->DenoiseRealTime, start, stop);
+        ui_denoise_cnt += 1;
+        guiData->DenoiseTime += guiData->DenoiseRealTime;
         showDeNoisedImage(pbo_dptr, iteration);
     }
     else {
         showImage(pbo_dptr, iteration);
     }
+    if (guiData->Sync) {
+        if(ui_denoise)
+            cudaMemcpy(renderState->image.data(), dev_image_denoised, width * height * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
+        else
+            cudaMemcpy(renderState->image.data(), dev_image, width * height * sizeof(glm::vec3), cudaMemcpyDeviceToHost);
+    }
+
 
     // unmap buffer object
     cudaGLUnmapBufferObject(pbo);

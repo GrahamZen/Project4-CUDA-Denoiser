@@ -7,7 +7,7 @@
 #include "glm/glm.hpp"
 #include "tiny_gltf.h"
 #define BACKGROUND_COLOR (glm::vec3(0.0f))
-
+#define OCT_NORMAL 1
 struct TriangleDetail;
 struct TBB {
     TBB();
@@ -254,6 +254,10 @@ struct ShadeableIntersection {
 // CHECKITOUT - a simple struct for storing scene geometry information per-pixel.
 // What information might be helpful for guiding a denoising filter?
 struct GBufferPixel {
+#if OCT_NORMAL
     glm::vec2 normal;
+#else
+    glm::vec3 normal;
+#endif
     glm::vec3 pos;
 };

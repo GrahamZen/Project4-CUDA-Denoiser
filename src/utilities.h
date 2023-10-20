@@ -44,6 +44,8 @@ public:
     float theta, phi;
     glm::vec3 cameraLookAt;
     float zoom;
+    float DenoiseTime;
+    float DenoiseRealTime;
 };
 
 namespace utilityCore
